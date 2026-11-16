@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forgetting the Pipeline Too</title>
+<meta name="description" content="PLU-GGN: tabular machine unlearning that also unlearns the preprocessing pipeline. ES 678 course project, IIT Gandhinagar.">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <p class="kicker">ES 678 · Machine Learning · IIT Gandhinagar · Ojas Gupta</p>
+    <h1>Forgetting the Pipeline Too</h1>
+    <p class="lede">When a patient withdraws consent, a hospital model should behave as if that patient was never in the training data.
+      Most unlearning methods update only the model weights, but tabular models also learn their <em>preprocessing</em>
+      (imputation means, scaling, target encodings) from the data. This project measures what that costs, and fixes it.</p>
+    <div class="links">
+      <a class="btn" href="paper.pdf">Read the paper (PDF, 4 pages)</a>
+      <a class="btn ghost" href="#live">Run it in your browser</a>
+      <a class="btn ghost" id="repo-link" href="https://github.com/Ojas1024/plu-ggn-unlearning">Source code</a>
+    </div>
+    <div class="stats" id="hero-stats"></div>
+  </div>
+</header>
+
+<nav class="toc"><div class="wrap">
+  <a href="#question">Question</a><a href="#data">Data</a><a href="#preprocessing">Preprocessing</a><a href="#methods">Methods</a>
+  <a href="#evaluation">Evaluation</a><a href="#results">Results</a><a href="#live">Live run</a><a href="#audit">Privacy audit</a>
+  <a href="#errors">Errors</a><a href="#limitations">Limitations</a><a href="#reproduce">Reproduce</a>
+</div></nav>
+
+<main class="wrap">
+
+<section id="question">
+  <h2>1. Question</h2>
+  <p><strong>How closely do cheap unlearning updates match full retraining when the preprocessing is also learned from the data, and what does a frozen preprocessor leak?</strong></p>
+  <p>The "gold standard" is <em>oracle retraining</em>: delete the patients, refit the whole pipeline and the model. Cheaper methods try to
+    approximate it. The question is about <em>unlearning fidelity</em>, not about building the best readmission model.</p>
+  <dl class="facts">
+    <div><dt>One row</dt><dd>One inpatient encounter of a diabetic patient</dd></div>
+    <div><dt>Target</dt><dd>Readmitted within 30 days (11.2% positive)</dd></div>
+    <div><dt>Prediction time</dt><dd>At discharge: only pre-discharge counts and categories are used</dd></div>
+    <div><dt>Deletion request</dt><dd>The top <var>q</var>% of training encounters by utilization (3·inpatient visits + 0.1·lab procedures); default 3% = 599 encounters</dd></div>
+  </dl>
+</section>
+
+<section id="data">
+  <h2>2. Data</h2>
+  <p>UCI <a href="https://archive.ics.uci.edu/dataset/296">Diabetes 130-US Hospitals</a> (1999–2008, Strack et al. 2014; CC BY 4.0), via OpenML id 4541.
+    We use a fixed random sample of <span data-k="data.n_encounters"></span> of 101,766 encounters, from <span data-k="data.n_patients"></span> distinct patients.
+    It is public and de-identified, so the sample is shipped with this site.</p>
+  <p>Features: 8 counts (<code>time_in_hospital</code>, <code>num_lab_procedures</code>, <code>num_procedures</code>, <code>num_medications</code>,
+    prior-year <code>number_outpatient/emergency/inpatient</code>, <code>number_diagnoses</code>) and 4 categoricals (admission type, discharge disposition, medical specialty, A1C result).</p>
+  <div class="grid2">
+    <div class="card"><h3>Heavy right tails</h3><p class="muted">Training set: median, 99th percentile and maximum of each count. The few extreme patients set the scaling.</p><div class="chart-box"><canvas id="c-tails"></canvas></div></div>
+    <div class="card"><h3>Quality issues we handle</h3>
+      <ul>
+        <li><strong>Repeat patients.</strong> Some patients have several encounters, so we split <em>by patient</em>: 0 patients appear in both train and test.</li>
+        <li><strong>Missing specialty.</strong> <span data-k="data.medical_specialty_missing" data-fmt="pct"></span> of encounters have no medical specialty; kept as its own level.</li>
+        <li><strong>Simulated missing counts.</strong> The released numeric columns are complete, so 12% of numeric cells are masked completely at random to exercise the imputer. This is a simulation; real missingness is rarely random.</li>
+        <li><strong>Imbalance.</strong> 11.2% positives, so we use PR-AUC rather than accuracy for the model check.</li>
+      </ul></div>
+  </div>
+</section>
+
+<section id="preprocessing">
+  <h2>3. Preprocessing (fitted on training rows only)</h2>
+  <ul>
+    <li>Numeric: mean imputation, then standardization <code>z = (x − μ)/σ</code>.</li>
+    <li>Categorical: Empirical-Bayes target encoding <code>(Σy + 10·ȳ)/(n + 10)</code>, centred and scaled by 10.</li>
+    <li>Everything is stored as <em>additive sufficient statistics</em> (counts, sums, sums of squares), so removing rows means subtracting their statistics. That costs O(|D<sub>f</sub>|) and never touches the retained data.</li>
+  </ul>
+</section>
+
+<section id="methods">
+  <h2>4. Baselines and methods</h2>
+  <p>Model: L2-regularized logistic regression (λ = 10, fixed in advance, not tuned on test). For each deletion request we compare against oracle retraining:</p>
+  <div class="methods">
+    <div class="card"><h3>No unlearning</h3><p>Keep the old weights and the old preprocessor. The trivial baseline.</p></div>
+    <div class="card"><h3>Gradient ascent</h3><p>5 small steps uphill on the deleted patients' loss. Preprocessor frozen.</p></div>
+    <div class="card"><h3>Standard influence (GGN)</h3><p>One Newton step that removes the deleted rows' gradient (Koh &amp; Liang 2017, Guo et al. 2020). Preprocessor frozen.</p></div>
+    <div class="card accent"><h3>PLU-GGN (ours)</h3><p>(1) Exactly downdate the preprocessor. (2) Add the gradient change caused by the new coordinates, <code>g<sub>shift</sub></code>. (3) Take a Gauss–Newton step in the new coordinates. Optional 2nd Newton step.</p></div>
+  </div>
+  <p class="note"><strong>Why the frozen preprocessor hurts.</strong> Removing high-utilization patients shrinks σ for <code>number_inpatient</code> from 1.20 to 0.78. The same real-world effect then needs a <em>smaller</em> coefficient per standardized unit. Standard influence pushes that coefficient the other way, so it can end up further from retraining than doing nothing.</p>
+</section>
+
+<section id="evaluation">
+  <h2>5. Evaluation design</h2>
+  <ul>
+    <li><strong>Split:</strong> patient-grouped 80/20 (19,995 train / 5,005 test), fixed before any comparison. Test data is used only for reporting.</li>
+    <li><strong>Weight error</strong> ‖θ − θ*<sub>r</sub>‖: the standard unlearning metric. Frozen-φ methods live in different coordinates, so we also report</li>
+    <li><strong>Function-space error:</strong> mean KL divergence between the method's and the oracle's test predictions. This doesn't depend on coordinates.</li>
+    <li><strong>Pipeline leak:</strong> how far the deployed μ, σ are from the retrained ones (100% = unchanged from before deletion).</li>
+    <li><strong>Sanity check:</strong> test PR-AUC (prevalence baseline <span data-k="predictive_baselines.prevalence_pr_auc" data-fmt="f3"></span>; <code>number_inpatient</code> alone <span data-k="predictive_baselines.number_inpatient_only.pr_auc" data-fmt="f3"></span>).</li>
+    <li><strong>Robustness:</strong> 5 seeds that change both the patient split and the missingness mask; a random-deletion control; deletion sizes from 0.5% to 8%.</li>
+  </ul>
+</section>
+
+<section id="results">
+  <h2>6. Results</h2>
+  <h3>Main comparison: deleting the 3% highest-utilization encounters</h3>
+  <div class="table-wrap"><table id="main-table"></table></div>
+  <p class="muted small">Speedups measured on one laptop-class CPU (median of 7 runs); retraining itself takes only ~0.09 s here, so the speedup matters for larger pipelines. "5 seeds" = mean ± s.d.</p>
+
+  <h3>How it changes with deletion size <span class="muted small">(precomputed sweep; switch the cohort type)</span></h3>
+  <div class="controls">
+    <div class="seg" role="group" aria-label="cohort type">
+      <button class="on" data-mode="top_utilization">High-utilization cohort</button><button data-mode="random">Random cohort</button>
+    </div>
+    <div class="seg" role="group" aria-label="metric">
+      <button class="on" data-metric="l2_err">Weight error</button><button data-metric="test_kl">Function-space error</button>
+    </div>
+  </div>
+  <div class="card"><div class="chart-box tall"><canvas id="c-sweep"></canvas></div>
+    <p class="muted small" id="sweep-note"></p></div>
+
+  <div class="takeaways">
+    <div><strong>Standard influence goes the wrong way in weights.</strong> For high-utilization deletions it ends further from retraining than doing nothing (all 5 seeds), though its predictions still improve.</div>
+    <div><strong>PLU-GGN closes the gap.</strong> One step: 26× lower weight error than standard influence at 3%; two steps: ~10<sup>−5</sup>.</div>
+    <div><strong>Random deletions are easy.</strong> The pipeline barely moves, so the failure is specific to high-leverage patients.</div>
+    <div><strong>Predictive quality is unchanged.</strong> PR-AUC differs by &lt;0.002 across methods, far less than the ±0.02 between seeds.</div>
+  </div>
+</section>
+
+<section id="live">
+  <h2>7. Live replication in your browser</h2>
+  <p>This runs the project's actual Python file (<code>plu_ggn.py</code>) through <a href="https://pyodide.org">Pyodide</a> on the 25k-encounter sample: patient-grouped split, preprocessing, model fit, oracle retraining, and every unlearning method. Nothing is sent to a server.
+    The first run downloads ~30 MB of Python packages.</p>
+  <form id="live-form" class="live-form">
+    <label>Deleted cohort <output id="o-frac">3.0%</output>
+      <input type="range" id="i-frac" min="0.5" max="10" step="0.5" value="3"></label>
+    <label>Cohort type
+      <select id="i-mode"><option value="top_utilization">High-utilization patients</option><option value="random">Random patients</option></select></label>
+    <label>Regularization λ
+      <select id="i-lam"><option>1</option><option selected>10</option><option>100</option></select></label>
+    <label>Split / mask seed
+      <select id="i-seed"><option>42</option><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+    <button type="submit" class="btn" id="run-btn">Run unlearning</button>
+  </form>
+  <p id="live-status" class="status" aria-live="polite">Not started.</p>
+  <div id="live-out" hidden>
+    <div class="table-wrap"><table id="live-table"></table></div>
+    <div class="grid2">
+      <div class="card"><h3>Coefficients vs. retraining</h3><p class="muted small">Each method's coefficient minus the oracle's. Bars near zero = faithful unlearning.</p><div class="chart-box tall"><canvas id="c-coef"></canvas></div></div>
+      <div class="card"><h3>What the frozen preprocessor remembers</h3><p class="muted small">Scaling σ per feature before deletion (frozen φ) and after retraining (= PLU-GGN's exact downdate).</p><div class="chart-box tall"><canvas id="c-sigma"></canvas></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="audit">
+  <h2>8. Depth analysis: what a "membership audit" really measured</h2>
+  <p>Our first privacy test scored each patient by how differently the deployed and the retrained preprocessor standardize them, and reported
+    AUC 0.95–0.999 for "deleted vs. test patient" under a frozen preprocessor, and exactly 0.5 for PLU-GGN. Both numbers turned out to be misleading:</p>
+  <ul>
+    <li>The score depends only on a patient's features, not on whether they were in training, so it cannot separate a member from a non-member with the same features.</li>
+    <li>It is identically zero when the deployed preprocessor equals the retrained one, so PLU-GGN's 0.5 holds by construction.</li>
+    <li>The deleted patients are the most extreme ones. Compared with ordinary test patients, extremeness alone gives a high AUC.</li>
+  </ul>
+  <div class="controls">
+    <div class="seg" role="group" aria-label="control set">
+      <button class="on" data-ctrl="std_vs_all_test">Compare with random test patients</button><button data-ctrl="std_vs_matched">Compare with equally extreme test patients</button>
+    </div>
+  </div>
+  <div class="card"><div class="chart-box"><canvas id="c-audit"></canvas></div><p class="muted small" id="audit-note"></p></div>
+  <p>What <em>is</em> real is aggregate leakage: the frozen preprocessor still contains the deleted cohort's statistics. If old and new statistics are both exposed, subtracting them recovers the deleted cohort's mean
+    <code>number_inpatient</code> exactly (<span data-k="differencing.recovered_forget_mean" data-fmt="f2"></span> vs. <span data-k="differencing.retain_mean" data-fmt="f2"></span> for retained patients). PLU-GGN removes the first problem, not the second; that would need added noise.</p>
+</section>
+
+<section id="errors">
+  <h2>9. Representative errors</h2>
+  <p>PLU-GGN (1 step) disagrees most with retraining on the most extreme held-out patients, where the curvature approximation is weakest. Median |Δp| is
+    <span data-k="errors.plu1_abs_dp_p50_p99_max.0" data-fmt="sci"></span>; the largest cases are below.</p>
+  <div class="table-wrap"><table id="err-table"></table></div>
+  <p class="muted small">Rank correlation between |Δp| and utilization: <span data-k="errors.spearman_dp_vs_utilization_plu1" data-fmt="f2"></span>. A second Newton step removes these errors (max |Δp| ≈ 5·10<sup>−5</sup>).</p>
+</section>
+
+<section id="limitations">
+  <h2>10. Limitations</h2>
+  <ul>
+    <li>Exact O(|D<sub>f</sub>|) downdates exist only for additive statistics; median or k-NN imputation would need approximations.</li>
+    <li>Only the preprocessor downdate is O(|D<sub>f</sub>|). The weight update makes one pass over the retained data: cheaper than retraining, but not free.</li>
+    <li>Missingness is simulated (completely at random).</li>
+    <li>One convex model with 13 parameters. For neural networks the Gauss–Newton step is only a local approximation.</li>
+    <li>One deletion rule. Other request patterns (e.g. all encounters of one patient) are untested.</li>
+    <li>No per-patient privacy claim (see §8). Associations in observational hospital data are not causal effects.</li>
+  </ul>
+</section>
+
+<section id="conclusion">
+  <h2>11. Conclusion</h2>
+  <p>When preprocessing is learned, unlearning has to update it too. For additive statistics that is cheap and exact. Adding the pipeline-shift gradient brings a one- or two-step update
+    to within 10<sup>−2</sup>–10<sup>−5</sup> of retraining. Without it, standard influence can move weights the wrong way, on exactly the high-leverage patients where deletion matters most.</p>
+</section>
+
+<section id="reproduce">
+  <h2>12. Reproduce</h2>
+<pre><code>git clone <span class="repo-url">https://github.com/Ojas1024/plu-ggn-unlearning</span>
+cd plu-ggn-unlearning
+pip install -r requirements.txt
+python experiments/run_all.py     # all tables, figures, results.json (~20 s)
+python src/plu_ggn.py             # just the main 3% comparison</code></pre>
+  <p>The data sample is cached in <code>data/diabetes_25k.csv</code>. Delete it and the loader re-downloads it from OpenML with the same seed.
+    Split: <code>GroupShuffleSplit(test_size=0.2, random_state=42)</code> on <code>patient_nbr</code>. The original Kaggle notebook is in <code>notebooks/</code>.</p>
+  <p class="muted small">AI use: Claude (Anthropic) helped with code refactoring, re-running and auditing experiments, this website and text editing. All results were checked by the author.</p>
+</section>
+</main>
+<footer><div class="wrap muted small">Ojas Gupta · ES 678, IIT Gandhinagar · Data: UCI Diabetes 130-US Hospitals (CC BY 4.0)</div></footer>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+# original uploads (copies live in notebooks/ and paper/)
+a (1).pdf
+notebook0758130da7 (1).ipynb
+# LaTeX build by-products
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.xdv
