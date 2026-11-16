@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Problem and Data · PLU-GGN</title>
+<meta name="description" content="Question, dataset, data quality and preprocessing for the PLU-GGN project.">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="site-head"><div class="wrap"><a class="brand" href="index.html">PLU-GGN</a><nav class="site-nav" aria-label="Pages"><a href="index.html">Overview</a><a href="problem.html" aria-current="page">Problem &amp; data</a><a href="method.html">Method</a><a href="results.html">Results</a><a href="playground.html">Playground</a><a href="limitations.html">Limitations &amp; reproduce</a></nav></div></header>
+
+<main class="wrap">
+<div class="page-head"><h1>Problem &amp; data</h1><p>What we ask, what one row means, and how the data is prepared.</p></div>
+<section id="question">
+  <h2>Question</h2>
+  <p><strong>How closely do cheap unlearning updates match full retraining when the preprocessing is also learned from the data, and what does a frozen preprocessor leak?</strong></p>
+  <p>The gold standard is <em>oracle retraining</em>: delete the patients, then refit the whole pipeline and the model. Cheaper methods try to approximate it.
+    The question is about <em>unlearning fidelity</em>, not about building the best readmission model.</p>
+  <dl class="facts">
+    <div><dt>One row</dt><dd>One inpatient encounter of a diabetic patient</dd></div>
+    <div><dt>Target</dt><dd>Readmitted within 30 days (11.2% positive)</dd></div>
+    <div><dt>Prediction time</dt><dd>At discharge: only pre-discharge counts and categories are used</dd></div>
+    <div><dt>Deletion request</dt><dd>Top <var>q</var>% of training encounters by utilization (3·inpatient visits + 0.1·lab procedures); default 3% = 599 encounters. Random cohorts serve as a control.</dd></div>
+  </dl>
+</section>
+<section id="data">
+  <h2>Data</h2>
+  <p>UCI <a href="https://archive.ics.uci.edu/dataset/296">Diabetes 130-US Hospitals</a> (1999–2008, Strack et al. 2014; CC BY 4.0), via OpenML id 4541.
+    We use a fixed random sample of <span data-k="data.n_encounters"></span> of the 101,766 encounters, from <span data-k="data.n_patients"></span> distinct patients.
+    The data is public and de-identified, so the sample ships with this site.</p>
+  <p>Features: 8 counts (<code>time_in_hospital</code>, <code>num_lab_procedures</code>, <code>num_procedures</code>, <code>num_medications</code>,
+    prior-year <code>number_outpatient/emergency/inpatient</code>, <code>number_diagnoses</code>) and 4 categoricals (admission type, discharge disposition, medical specialty, A1C result).</p>
+  <div class="grid2">
+    <div class="card"><h3>Heavy right tails</h3><p class="muted small">Training set: median, 99th percentile and maximum of each count. The few extreme patients set the scaling.</p><div class="chart-box"><canvas id="c-tails"></canvas></div></div>
+    <div class="card"><h3>Quality issues we handle</h3>
+      <ul>
+        <li><strong>Repeat patients.</strong> Some patients have several encounters, so we split <em>by patient</em>: <span data-k="data.patient_overlap"></span> patients appear in both train and test.</li>
+        <li><strong>Missing specialty.</strong> <span data-k="data.medical_specialty_missing" data-fmt="pct"></span> of encounters have no medical specialty; kept as its own level.</li>
+        <li><strong>Simulated missing counts.</strong> The released numeric columns are complete, so 12% of numeric cells are masked completely at random to exercise the imputer. This is a simulation; real missingness is rarely random.</li>
+        <li><strong>Imbalance.</strong> 11.2% positives, so we check the model with PR-AUC, not accuracy.</li>
+      </ul></div>
+  </div>
+</section>
+<section id="preprocessing">
+  <h2>Preprocessing (fitted on training rows only)</h2>
+  <ul>
+    <li>Numeric: mean imputation, then standardization <code>z = (x − μ)/σ</code>.</li>
+    <li>Categorical: Empirical-Bayes target encoding <code>(Σy + 10·ȳ)/(n + 10)</code>, centred and scaled by 10.</li>
+    <li>Everything is stored as <em>additive sufficient statistics</em> (counts, sums, sums of squares), so removing rows means subtracting their statistics. That costs O(|D<sub>f</sub>|) and never touches the retained data.</li>
+  </ul>
+</section>
+</main>
+<div class="wrap"><nav class="pager" aria-label="Previous and next page"><a href="index.html">← Overview</a><a href="method.html">Method →</a></nav></div>
+<footer><div class="wrap muted small">Ojas Gupta · ES 678, IIT Gandhinagar · Data: UCI Diabetes 130-US Hospitals (CC BY 4.0) · <a data-repo href="https://github.com/Ojas1024/plu-ggn-unlearning">Source code</a> · <a href="paper.pdf">Paper (PDF)</a></div></footer>
+<script src="assets/common.js"></script><script src="assets/pages.js"></script>
+</body>
+</html>

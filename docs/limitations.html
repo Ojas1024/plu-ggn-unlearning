@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Limitations and Reproduction · PLU-GGN</title>
+<meta name="description" content="Limitations, conclusion, reproduction steps and AI-use statement.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="site-head"><div class="wrap"><a class="brand" href="index.html">PLU-GGN</a><nav class="site-nav" aria-label="Pages"><a href="index.html">Overview</a><a href="problem.html">Problem &amp; data</a><a href="method.html">Method</a><a href="results.html">Results</a><a href="playground.html">Playground</a><a href="limitations.html" aria-current="page">Limitations &amp; reproduce</a></nav></div></header>
+
+<main class="wrap">
+<div class="page-head"><h1>Limitations &amp; reproduce</h1><p>What the evidence does and does not show, and how to get every number back.</p></div>
+<section>
+  <h2>Limitations</h2>
+  <ul>
+    <li>Exact O(|D<sub>f</sub>|) downdates exist only for additive statistics; median or k-NN imputation would need approximations.</li>
+    <li>Only the preprocessor downdate is O(|D<sub>f</sub>|). The weight update makes one pass over the retained data: cheaper than retraining, but not free.</li>
+    <li>Missingness is simulated (completely at random).</li>
+    <li>One convex model with 13 parameters. For neural networks the Gauss–Newton step is only a local approximation.</li>
+    <li>One deletion rule in the paper. Other request patterns can be tried in the <a href="playground.html">Playground</a> but are not part of the reported evidence.</li>
+    <li>No per-patient privacy claim (see <a href="results.html#audit">the audit analysis</a>). Associations in observational hospital data are not causal effects.</li>
+  </ul>
+</section>
+<section>
+  <h2>Conclusion</h2>
+  <p>When preprocessing is learned, unlearning has to update it too. For additive statistics that is cheap and exact. Adding the pipeline-shift gradient brings a one- or two-step update
+    to within 10<sup>−2</sup>–10<sup>−5</sup> of retraining. Without it, standard influence can move weights the wrong way, on exactly the high-leverage patients where deletion matters most.</p>
+</section>
+<section>
+  <h2>Reproduce</h2>
+<pre><code>git clone https://github.com/Ojas1024/plu-ggn-unlearning
+cd plu-ggn-unlearning
+pip install -r requirements.txt
+python experiments/run_all.py     # all tables, figures, results.json (~20 s)
+python src/plu_ggn.py             # just the main 3% comparison</code></pre>
+  <ul>
+    <li><strong>Data:</strong> <code>data/diabetes_25k.csv</code> is cached in the repo. Delete it and the loader re-downloads it from OpenML (id 4541) with the same seed.</li>
+    <li><strong>Split:</strong> <code>GroupShuffleSplit(test_size=0.2, random_state=42)</code> on <code>patient_nbr</code>.</li>
+    <li><strong>Missingness:</strong> 12% of numeric cells masked with <code>RandomState(42)</code>.</li>
+    <li><strong>Fixed hyperparameters:</strong> λ = 10 (intercept 10<sup>−4</sup>), target-encoding smoothing m = 10.</li>
+    <li>Timings depend on the machine; accuracy numbers are deterministic. The original Kaggle notebook is in <code>notebooks/</code>.</li>
+  </ul>
+</section>
+<section>
+  <h2>AI use</h2>
+  <p class="muted">Claude (Anthropic) helped with code refactoring, re-running and auditing experiments, this website and text editing. All results were checked by the author.</p>
+</section>
+</main>
+<div class="wrap"><nav class="pager" aria-label="Previous and next page"><a href="playground.html">← Playground</a><span></span></nav></div>
+<footer><div class="wrap muted small">Ojas Gupta · ES 678, IIT Gandhinagar · Data: UCI Diabetes 130-US Hospitals (CC BY 4.0) · <a data-repo href="https://github.com/Ojas1024/plu-ggn-unlearning">Source code</a> · <a href="paper.pdf">Paper (PDF)</a></div></footer>
+<script src="assets/common.js"></script>
+</body>
+</html>

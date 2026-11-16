@@ -80,6 +80,26 @@ def load_clinical_readmission_data(
     return X_df, y, patient_ids
 
 
+def prepare_dataset(df: pd.DataFrame, target: str, positive: str, num_cols: list, cat_cols: list,
+                    missing_rate: float = 0.0, mask_seed: int = RANDOM_SEED):
+    """
+    Generic version of load_clinical_readmission_data for any table (used by the website playground).
+    y = 1 where str(df[target]) == positive. Numeric columns are coerced to float; categorical
+    columns become strings with blanks/'?'/'nan' mapped to 'Missing'. Optionally masks
+    `missing_rate` of numeric cells completely at random.
+    """
+    y = (df[target].astype(str) == str(positive)).astype(np.float64).values
+    X_df = df[list(num_cols) + list(cat_cols)].copy()
+    for c in num_cols:
+        X_df[c] = pd.to_numeric(X_df[c], errors="coerce").astype(np.float64)
+    if missing_rate > 0 and len(num_cols):
+        mask = np.random.RandomState(mask_seed).rand(len(X_df), len(num_cols)) < missing_rate
+        X_df[list(num_cols)] = X_df[list(num_cols)].mask(mask)
+    for c in cat_cols:
+        X_df[c] = X_df[c].astype(str).replace({"?": "Missing", "nan": "Missing", "None": "Missing", "": "Missing"}).astype(object)
+    return X_df, y
+
+
 def utilization_score(X_df: pd.DataFrame) -> np.ndarray:
     """Ranking used to pick the high-utilization forget cohort."""
     return X_df["number_inpatient"].fillna(0).values * 3.0 + X_df["num_lab_procedures"].fillna(0).values * 0.1
@@ -319,13 +339,16 @@ def choose_forget_set(X_train_df, frac, mode="top_utilization", seed=0):
     return np.random.RandomState(seed).choice(len(X_train_df), size=n_f, replace=False)
 
 
-def run_unlearning(X_train_df, y_train, X_test_df, y_test, forget_idx, l2_reg=10.0, fitted=None, timing_repeats=1):
+def run_unlearning(X_train_df, y_train, X_test_df, y_test, forget_idx, l2_reg=10.0, fitted=None, timing_repeats=1,
+                   num_cols=None, cat_cols=None):
     """
     Runs oracle retraining and every unlearning method for one deletion request.
     Returns a dict of per-method metrics plus raw objects for further analysis.
     `fitted` = (prep_full, X_train_full, model_full) lets callers reuse the original fit.
+    `num_cols` / `cat_cols` default to the diabetes feature set.
     """
-    num_cols, cat_cols = NUM_COLS, CAT_COLS
+    num_cols = NUM_COLS if num_cols is None else list(num_cols)
+    cat_cols = CAT_COLS if cat_cols is None else list(cat_cols)
     if fitted is None:
         prep_full = DowndatablePreprocessor(num_cols, cat_cols).fit(X_train_df, y_train)
         X_train_full = prep_full.transform(X_train_df)

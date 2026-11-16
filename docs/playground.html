@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unlearning Playground · PLU-GGN</title>
+<meta name="description" content="Run PLU-GGN in your browser on the default diabetes data or your own CSV; choose features and which rows to forget.">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="site-head"><div class="wrap"><a class="brand" href="index.html">PLU-GGN</a><nav class="site-nav" aria-label="Pages"><a href="index.html">Overview</a><a href="problem.html">Problem &amp; data</a><a href="method.html">Method</a><a href="results.html">Results</a><a href="playground.html" aria-current="page">Playground</a><a href="limitations.html">Limitations &amp; reproduce</a></nav></div></header>
+
+<main class="wrap">
+<div class="page-head"><h1>Unlearning playground</h1>
+  <p>Everything runs in your browser with the project's own Python code (via <a href="https://pyodide.org">Pyodide</a>). Uploaded files never leave your computer.
+  Pick a dataset, decide how it is modelled, choose which rows to forget, and compare every unlearning method against full retraining.</p></div>
+<p id="py-status" class="status" aria-live="polite">Starting Python…</p>
+
+<section class="step" id="step1">
+  <h2 class="step-title"><span class="step-num">1</span> Choose a dataset</h2>
+  <div class="dataset-choice">
+    <div class="card accent"><h3>Diabetes readmission (default)</h3>
+      <p class="muted small">The 25,000-encounter sample used in the paper, with the paper's settings preloaded.</p>
+      <button class="btn small" id="use-default" disabled>Use this dataset</button></div>
+    <label class="dropzone card" id="dropzone"><h3>Upload your own CSV</h3>
+      <p class="muted small">Any table with a header row and a binary (or binarizable) target column. Up to 20 MB; larger tables are sampled to 60,000 rows.</p>
+      <span class="btn small ghost">Choose file…</span> <span class="muted small">or drop it here</span>
+      <input type="file" id="file" accept=".csv,text/csv" disabled></label>
+  </div>
+  <p id="data-status" class="status"></p>
+</section>
+
+<section class="step locked" id="step2">
+  <h2 class="step-title"><span class="step-num">2</span> Set up the model</h2>
+  <p class="muted small">Choose the target, how each column is used, and how to split. Any column you set to <em>drop</em> is not used as a feature (you can still use it to choose rows to forget).</p>
+  <div class="row">
+    <label class="field">Target column <select id="target"></select></label>
+    <label class="field">Positive class (target = …) <select id="positive"></select></label>
+    <label class="field">Group column for the split <select id="group"></select></label>
+    <label class="field">Simulated missing numeric cells <output id="o-miss">0%</output><input type="range" id="miss" min="0" max="0.4" step="0.02" value="0"></label>
+    <label class="field">Regularization λ <select id="l2"><option>0.1</option><option>1</option><option selected>10</option><option>100</option></select></label>
+    <label class="field">Test share <select id="test-size"><option value="0.2" selected>20%</option><option value="0.3">30%</option></select></label>
+    <label class="field">Seed <input type="number" id="seed" value="42" min="0" max="9999" style="width:90px"></label>
+  </div>
+  <div class="row"><button class="icon-btn" type="button" data-bulk="detected">reset to detected types</button><button class="icon-btn" type="button" data-bulk="drop">drop all features</button></div>
+  <div class="table-wrap"><table class="coltable" id="coltable"></table></div>
+  <div class="row"><button class="btn" id="fit-btn">Fit model</button><span id="fit-status" class="status"></span></div>
+  <div class="kv" id="fit-kv"></div>
+</section>
+
+<section class="step locked" id="step3">
+  <h2 class="step-title"><span class="step-num">3</span> Choose what to forget</h2>
+  <p class="muted small">Rows are chosen from the training split only. Try a rule that singles out unusual rows and compare it with a random cohort.</p>
+  <div class="tabs" role="tablist">
+    <button class="on" data-tab="top" role="tab">Extreme rows</button><button data-tab="random" role="tab">Random rows</button>
+    <button data-tab="filter" role="tab">Rule-based</button><button data-tab="pick" role="tab">Pick by hand</button>
+  </div>
+  <div class="tab-panel" data-panel="top">
+    <div class="row">
+      <label class="field">Rank by <select id="top-col"></select></label>
+      <label class="field">Forget the <select id="top-dir"><option value="high">highest</option><option value="low">lowest</option></select></label>
+      <label class="field">Share of training rows <output id="o-top">3.0%</output><input type="range" id="top-frac" min="0.5" max="20" step="0.5" value="3"></label>
+    </div>
+  </div>
+  <div class="tab-panel" data-panel="random" hidden>
+    <div class="row">
+      <label class="field">Share of training rows <output id="o-rand">3.0%</output><input type="range" id="rand-frac" min="0.5" max="20" step="0.5" value="3"></label>
+      <label class="field">Random seed <input type="number" id="rand-seed" value="0" min="0" style="width:90px"></label>
+    </div>
+  </div>
+  <div class="tab-panel" data-panel="filter" hidden>
+    <p class="muted small">Forget every training row that matches <strong>all</strong> conditions.</p>
+    <div id="conds"></div>
+    <button class="icon-btn" type="button" id="add-cond">+ add condition</button>
+  </div>
+  <div class="tab-panel" data-panel="pick" hidden>
+    <div class="row">
+      <label class="field">Search <input type="search" id="pick-q" placeholder="any value…"></label>
+      <span class="pill" id="pick-count">0 selected</span>
+      <button class="icon-btn" type="button" id="pick-page-all">select this page</button>
+      <button class="icon-btn" type="button" id="pick-clear">clear</button>
+    </div>
+    <p class="muted small">Click a column header to sort. Tick rows to forget them.</p>
+    <div class="table-wrap"><table class="picktable" id="pick-table"></table></div>
+    <div class="row"><button class="icon-btn" id="pick-prev">← prev</button><span class="muted small" id="pick-pageinfo"></span><button class="icon-btn" id="pick-next">next →</button></div>
+  </div>
+  <div class="card" id="preview">
+    <h3>Deletion request <span class="pill" id="pv-n">–</span></h3>
+    <p class="muted small" id="pv-note"></p>
+    <div class="table-wrap"><table id="pv-table"></table></div>
+  </div>
+</section>
+
+<section class="step locked" id="step4">
+  <h2 class="step-title"><span class="step-num">4</span> Unlearn and compare</h2>
+  <div class="row"><button class="btn" id="run-btn">Run unlearning</button><button class="btn ghost" id="sweep-btn" title="Repeat for 0.5–8% (extreme or random rows only)">Sweep deletion sizes</button><span id="run-status" class="status"></span></div>
+  <div id="run-out" hidden>
+    <div class="table-wrap"><table id="run-table"></table></div>
+    <p class="muted small">Weight error = distance to the retrained weights. Test KL = how differently the method predicts on the test split. Pipe leak = how much of the deleted rows' effect on μ and σ is still in the deployed preprocessor.</p>
+    <div class="grid2">
+      <div class="card"><h3>Coefficients vs. retraining</h3><p class="muted small">Each method's coefficient minus the retrained one. Bars near zero = faithful unlearning.</p><div class="chart-box tall" id="coef-box"><canvas id="c-coef"></canvas></div></div>
+      <div class="card"><h3>What the frozen preprocessor remembers</h3><p class="muted small">μ and σ before deletion (what a frozen pipeline keeps) and after retraining (what PLU-GGN's exact downdate gives).</p><div class="table-wrap"><table id="pipe-table"></table></div></div>
+    </div>
+  </div>
+  <div class="card" id="sweep-out" hidden><h3>Deletion-size sweep</h3><div class="chart-box tall"><canvas id="c-psweep"></canvas></div></div>
+</section>
+</main>
+<div class="wrap"><nav class="pager" aria-label="Previous and next page"><a href="results.html">← Results</a><a href="limitations.html">Limitations &amp; reproduce →</a></nav></div>
+<footer><div class="wrap muted small">Ojas Gupta · ES 678, IIT Gandhinagar · Data: UCI Diabetes 130-US Hospitals (CC BY 4.0) · <a data-repo href="https://github.com/Ojas1024/plu-ggn-unlearning">Source code</a> · <a href="paper.pdf">Paper (PDF)</a></div></footer>
+<script src="assets/common.js"></script><script src="assets/playground.js"></script>
+</body>
+</html>

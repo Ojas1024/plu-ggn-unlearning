@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Results · PLU-GGN</title>
+<meta name="description" content="Main comparison, deletion sweep, privacy audit and representative errors.">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="site-head"><div class="wrap"><a class="brand" href="index.html">PLU-GGN</a><nav class="site-nav" aria-label="Pages"><a href="index.html">Overview</a><a href="problem.html">Problem &amp; data</a><a href="method.html">Method</a><a href="results.html" aria-current="page">Results</a><a href="playground.html">Playground</a><a href="limitations.html">Limitations &amp; reproduce</a></nav></div></header>
+
+<main class="wrap">
+<div class="page-head"><h1>Results</h1><p>All numbers are produced by <code>experiments/run_all.py</code>. To rerun them yourself, use the <a href="playground.html">Playground</a>.</p></div>
+<section>
+  <h2>Main comparison: deleting the 3% highest-utilization encounters</h2>
+  <div class="table-wrap"><table id="main-table"></table></div>
+  <p class="muted small">Speedups measured on one CPU (median of 7 runs). Retraining itself takes only ~0.09 s here, so the speedup matters for larger pipelines. "5 seeds" = mean ± s.d.</p>
+</section>
+<section>
+  <h2>How it changes with deletion size</h2>
+  <div class="controls">
+    <div class="seg" role="group" aria-label="cohort type"><button class="on" data-mode="top_utilization">High-utilization cohort</button><button data-mode="random">Random cohort</button></div>
+    <div class="seg" role="group" aria-label="metric"><button class="on" data-metric="l2_err">Weight error</button><button data-metric="test_kl">Function-space error</button></div>
+  </div>
+  <div class="card"><div class="chart-box tall"><canvas id="c-sweep"></canvas></div><p class="muted small" id="sweep-note"></p></div>
+  <div class="takeaways">
+    <div><strong>Standard influence goes the wrong way in weights.</strong> For high-utilization deletions it ends further from retraining than doing nothing (all 5 seeds), though its predictions still improve.</div>
+    <div><strong>PLU-GGN closes the gap.</strong> One step: 26× lower weight error than standard influence at 3%. Two steps: ~10<sup>−5</sup>.</div>
+    <div><strong>Random deletions are easy.</strong> The pipeline barely moves, so the failure is specific to high-leverage patients.</div>
+    <div><strong>Predictive quality is unchanged.</strong> PR-AUC differs by &lt;0.002 across methods, far less than the ±0.02 between seeds.</div>
+  </div>
+</section>
+<section id="audit">
+  <h2>Depth analysis: what a "membership audit" really measured</h2>
+  <p>Our first privacy test scored each patient by how differently the deployed and the retrained preprocessor standardize them. It reported
+    AUC 0.95–0.999 for "deleted vs. test patient" under a frozen preprocessor, and exactly 0.5 for PLU-GGN. Both numbers turned out to be misleading:</p>
+  <ul>
+    <li>The score depends only on a patient's features, not on whether they were in training, so it cannot separate a member from a non-member with the same features.</li>
+    <li>It is identically zero when the deployed preprocessor equals the retrained one, so PLU-GGN's 0.5 holds by construction.</li>
+    <li>The deleted patients are the most extreme ones. Compared with ordinary test patients, extremeness alone gives a high AUC.</li>
+  </ul>
+  <div class="controls"><div class="seg" role="group" aria-label="control set"><button class="on" data-ctrl="std_vs_all_test">Compare with random test patients</button><button data-ctrl="std_vs_matched">Compare with equally extreme test patients</button></div></div>
+  <div class="card"><div class="chart-box"><canvas id="c-audit"></canvas></div><p class="muted small" id="audit-note"></p></div>
+  <p>What <em>is</em> real is aggregate leakage: the frozen preprocessor still contains the deleted cohort's statistics. If old and new statistics are both exposed, subtracting them recovers the deleted cohort's mean
+    <code>number_inpatient</code> exactly (<span data-k="differencing.recovered_forget_mean" data-fmt="f2"></span> vs. <span data-k="differencing.retain_mean" data-fmt="f2"></span> for retained patients). PLU-GGN removes the first problem, not the second; that would need added noise.</p>
+</section>
+<section id="errors">
+  <h2>Representative errors</h2>
+  <p>PLU-GGN (1 step) disagrees most with retraining on the most extreme held-out patients, where the curvature approximation is weakest. Median |Δp| is
+    <span data-k="errors.plu1_abs_dp_p50_p99_max.0" data-fmt="sci"></span>. The largest cases:</p>
+  <div class="table-wrap"><table id="err-table"></table></div>
+  <p class="muted small">Rank correlation between |Δp| and utilization: <span data-k="errors.spearman_dp_vs_utilization_plu1" data-fmt="f2"></span>. A second Newton step removes these errors (max |Δp| ≈ 5·10<sup>−5</sup>).</p>
+</section>
+</main>
+<div class="wrap"><nav class="pager" aria-label="Previous and next page"><a href="method.html">← Method</a><a href="playground.html">Playground →</a></nav></div>
+<footer><div class="wrap muted small">Ojas Gupta · ES 678, IIT Gandhinagar · Data: UCI Diabetes 130-US Hospitals (CC BY 4.0) · <a data-repo href="https://github.com/Ojas1024/plu-ggn-unlearning">Source code</a> · <a href="paper.pdf">Paper (PDF)</a></div></footer>
+<script src="assets/common.js"></script><script src="assets/pages.js"></script>
+</body>
+</html>

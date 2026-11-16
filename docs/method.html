@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Method · PLU-GGN</title>
+<meta name="description" content="Baselines, PLU-GGN algorithm and evaluation design.">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="site-head"><div class="wrap"><a class="brand" href="index.html">PLU-GGN</a><nav class="site-nav" aria-label="Pages"><a href="index.html">Overview</a><a href="problem.html">Problem &amp; data</a><a href="method.html" aria-current="page">Method</a><a href="results.html">Results</a><a href="playground.html">Playground</a><a href="limitations.html">Limitations &amp; reproduce</a></nav></div></header>
+
+<main class="wrap">
+<div class="page-head"><h1>Method</h1><p>The baselines, why freezing the preprocessor fails, what PLU-GGN does, and how everything is evaluated.</p></div>
+<section>
+  <h2>Baselines and methods</h2>
+  <p>Model: L2-regularized logistic regression (λ = 10, fixed in advance and not tuned on test data). For each deletion request every method is compared against oracle retraining:</p>
+  <div class="methods">
+    <div class="card"><h3>No unlearning</h3><p>Keep the old weights and the old preprocessor. The trivial baseline.</p></div>
+    <div class="card"><h3>Gradient ascent</h3><p>5 small steps uphill on the deleted patients' loss. Preprocessor frozen.</p></div>
+    <div class="card"><h3>Standard influence (GGN)</h3><p>One Newton step that removes the deleted rows' gradient (Koh &amp; Liang 2017; Guo et al. 2020). Preprocessor frozen.</p></div>
+    <div class="card accent"><h3>PLU-GGN (ours)</h3><p>(1) Exactly downdate the preprocessor. (2) Add the gradient change caused by the new coordinates, <code>g<sub>shift</sub></code>. (3) Take a Gauss–Newton step in the new coordinates. Optional 2nd Newton step.</p></div>
+  </div>
+</section>
+<section>
+  <h2>Why a frozen preprocessor hurts</h2>
+  <p>The total change from the original weights to the retrained ones has two parts:</p>
+  <p class="note"><strong>θ*<sub>r</sub> − θ̂ = [sample removal] + [coordinate change]</strong><br>
+    Standard influence estimates only the first part. Removing the heaviest hospital users shrinks σ for <code>number_inpatient</code> from 1.20 to 0.78, so the same real-world effect needs a <em>smaller</em> coefficient per standardized unit.
+    Removing those patients' gradient pushes the same coefficient up. When the two parts point in opposite directions, standard influence can land further from retraining than doing nothing.</p>
+  <p class="muted small">This is an identity plus an argument about direction, not a theorem; the Results page checks it.</p>
+  <div class="card"><h3>The coefficients at 3% deletion</h3><p class="muted small"><code>number_inpatient</code>: oracle 0.253, full model 0.328, standard influence 0.390. The removal step moves it the wrong way.</p>
+    <div class="table-wrap"><table id="coef-table"></table></div></div>
+</section>
+<section>
+  <h2>PLU-GGN in three steps</h2>
+  <ol>
+    <li><strong>Exact preprocessor downdate.</strong> Subtract the deleted rows' (count, Σx, Σx²) and (category count, Σy) and recompute μ, σ and encodings: O(|D<sub>f</sub>|). The stored design matrix is re-expressed by the affine map <code>z' = (σ/σ')·z + (μ − μ')/σ'</code>. Imputed cells stay 0 and categorical columns are re-mapped.</li>
+    <li><strong>Pipeline-shift gradient.</strong> <code>g<sub>shift</sub> = Σ<sub>retained</sub> [∇ℓ(new features) − ∇ℓ(old features)]</code>, evaluated at the old weights.</li>
+    <li><strong>Gauss–Newton step</strong> in the new coordinates: <code>θ = θ̂ + G<sub>new</sub><sup>−1</sup>(g<sub>rem</sub> − g<sub>shift</sub>)</code>. PLU-GGN-2 adds one more Newton step.</li>
+  </ol>
+  <p class="muted small">Cost: only step 1 is O(|D<sub>f</sub>|). Steps 2–3 make one pass over the retained data (O(|D<sub>r</sub>|d² + d³), d = 13) but need no iterative optimization, so PLU-GGN is cheaper than retraining but not free.</p>
+</section>
+<section>
+  <h2>Evaluation design</h2>
+  <ul>
+    <li><strong>Split:</strong> patient-grouped 80/20 (19,995 train / 5,005 test), fixed before any comparison. Test data is used only for reporting.</li>
+    <li><strong>Weight error</strong> ‖θ − θ*<sub>r</sub>‖: the standard unlearning metric. Frozen-φ methods express θ in different coordinates, so we also report</li>
+    <li><strong>Function-space error:</strong> mean KL divergence between the method's and the oracle's test predictions, which doesn't depend on coordinates.</li>
+    <li><strong>Pipeline leak:</strong> how far the deployed μ, σ are from the retrained ones (100% = unchanged from before deletion).</li>
+    <li><strong>Sanity check:</strong> test PR-AUC (prevalence baseline <span data-k="predictive_baselines.prevalence_pr_auc" data-fmt="f3"></span>; <code>number_inpatient</code> alone <span data-k="predictive_baselines.number_inpatient_only.pr_auc" data-fmt="f3"></span>).</li>
+    <li><strong>Exact reference:</strong> L-BFGS stops about 10<sup>−5</sup> from the optimum, so the oracle is polished with Newton steps. Only the ordinary L-BFGS refit is timed.</li>
+    <li><strong>Robustness:</strong> 5 seeds that change both the patient split and the missingness mask; a random-deletion control; deletion sizes from 0.5% to 8%.</li>
+  </ul>
+</section>
+</main>
+<div class="wrap"><nav class="pager" aria-label="Previous and next page"><a href="problem.html">← Problem &amp; data</a><a href="results.html">Results →</a></nav></div>
+<footer><div class="wrap muted small">Ojas Gupta · ES 678, IIT Gandhinagar · Data: UCI Diabetes 130-US Hospitals (CC BY 4.0) · <a data-repo href="https://github.com/Ojas1024/plu-ggn-unlearning">Source code</a> · <a href="paper.pdf">Paper (PDF)</a></div></footer>
+<script src="assets/common.js"></script><script src="assets/pages.js"></script>
+</body>
+</html>
