@@ -1,16 +1,24 @@
 """Generates the static pages in docs/ (shared header, nav and footer). Run: python scripts/make_pages.py docs"""
-import os, sys
+import os, sys, hashlib, glob
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "..", "docs")
 REPO = "https://github.com/Ojas1024/plu-ggn-unlearning"
 NAV = [("index.html", "Overview"), ("problem.html", "Problem &amp; data"), ("method.html", "Method"),
        ("results.html", "Results"), ("playground.html", "Playground"), ("limitations.html", "Limitations &amp; reproduce")]
+
+def _ver():
+    h = hashlib.md5()
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    for f in sorted(glob.glob(os.path.join(root, "docs", "assets", "*")) + glob.glob(os.path.join(root, "src", "*.py"))):
+        h.update(open(f, "rb").read())
+    return h.hexdigest()[:8]
+V = _ver()
 
 def page(fname, title, desc, body, scripts=("pages.js",), chart=True):
     nav = "".join(f'<a href="{f}"{" aria-current=\"page\"" if f == fname else ""}>{t}</a>' for f, t in NAV)
     i = [f for f, _ in NAV].index(fname)
     prev = f'<a href="{NAV[i-1][0]}">← {NAV[i-1][1]}</a>' if i > 0 else "<span></span>"
     nxt = f'<a href="{NAV[i+1][0]}">{NAV[i+1][1]} →</a>' if i < len(NAV) - 1 else "<span></span>"
-    js = "".join(f'<script src="assets/{s}"></script>' for s in scripts)
+    js = "".join(f'<script src="assets/{s}?v={V}"></script>' for s in scripts)
     cdn = '<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>\n' if chart else ""
     html = f"""<!doctype html>
 <html lang="en">
@@ -19,14 +27,14 @@ def page(fname, title, desc, body, scripts=("pages.js",), chart=True):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <meta name="description" content="{desc}">
-<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/style.css?v={V}">
 {cdn}</head>
 <body>
 <header class="site-head"><div class="wrap"><a class="brand" href="index.html">PLU-GGN</a><nav class="site-nav" aria-label="Pages">{nav}</nav></div></header>
 {body}
 <div class="wrap"><nav class="pager" aria-label="Previous and next page">{prev}{nxt}</nav></div>
 <footer><div class="wrap muted small">Ojas Gupta · ES 678, IIT Gandhinagar · Data: UCI Diabetes 130-US Hospitals (CC BY 4.0) · <a data-repo href="{REPO}">Source code</a> · <a href="paper.pdf">Paper (PDF)</a></div></footer>
-<script src="assets/common.js"></script>{js}
+<script src="assets/common.js?v={V}"></script>{js}
 </body>
 </html>
 """

@@ -27,10 +27,13 @@
       const py = await loadPyodide();
       setStatus("py-status", "Installing numpy, pandas, scipy, scikit-learn…");
       await py.loadPackage(["numpy", "pandas", "scipy", "scikit-learn"]);
-      const [a, b] = await Promise.all([fetch("py/plu_ggn.py").then((r) => r.text()), fetch("py/playground_api.py").then((r) => r.text())]);
+      // Always revalidate the Python sources: a stale cached plu_ggn.py next to a newer playground_api.py breaks imports.
+      const src = (f) => fetch(`py/${f}`, { cache: "no-cache" }).then((r) => { if (!r.ok) throw new Error(`could not load ${f}`); return r.text(); });
+      const [a, b] = await Promise.all([src("plu_ggn.py"), src("playground_api.py")]);
       py.FS.writeFile("/home/pyodide/plu_ggn.py", a);
       py.FS.writeFile("/home/pyodide/playground_api.py", b);
-      py.runPython("import sys; sys.path.insert(0, '/home/pyodide')");
+      py.runPython("import sys, importlib; sys.path.insert(0, '/home/pyodide'); importlib.invalidate_caches()");
+      if (!py.runPython("import plu_ggn; hasattr(plu_ggn, 'prepare_dataset')")) throw new Error("the site's Python files are out of sync; reload the page");
       S.py = py;
       S.api = py.pyimport("playground_api");
       setStatus("py-status", "Python is ready. Everything below runs locally in this tab.");
@@ -63,7 +66,7 @@
   }
   $("use-default").addEventListener("click", async () => {
     $("use-default").disabled = true;
-    const text = await fetch("data/diabetes_25k.csv").then((r) => r.text());
+    const text = await fetch("data/diabetes_25k.csv", { cache: "no-cache" }).then((r) => r.text());
     await loadTable(text, true, "Diabetes readmission sample");
     $("use-default").disabled = false;
   });

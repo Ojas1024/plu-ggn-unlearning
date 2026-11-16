@@ -60,7 +60,7 @@ window.PLU = (() => {
   }
 
   let resultsPromise = null;
-  const loadResults = () => (resultsPromise ||= fetch("data/results.json").then((r) => r.json()));
+  const loadResults = () => (resultsPromise ||= fetch("data/results.json", { cache: "no-cache" }).then((r) => r.json()));
 
   function fillSpans(R) {
     document.querySelectorAll("[data-k]").forEach((el) => {
